@@ -1,0 +1,76 @@
+#!/bin/bash
+#######################
+# Ievgen Kabanets     #
+# Maksym Zinkevych    #
+# EPAM                #
+# 2014                #
+#######################
+
+DATE=`date +%Y-%m-%d`
+DIR="/opt/graylog2-server"
+BACKUP_PATH_TMP="/tmp"
+HNAME=`hostname`
+ES_PATH="<%= node[:graylog][:elasticsearch][:data_path] %>"
+
+backup()
+{
+    logger -s -i "Stoping chef-client, Graylog Server & elasticsearch services"
+        /etc/init.d/graylog-server stop
+        /etc/init.d/elasticsearch stop
+        /etc/init.d/chef-client stop
+
+    logger -s -i "Dumping MongoDB"
+        /bin/mkdir -p $BACKUP_PATH_TMP/$DATE-$HNAME/graylog2-mongodump
+        /usr/bin/mongodump -h 127.0.0.1 -d graylog2 -o $BACKUP_PATH_TMP/$DATE-$HNAME/graylog2-mongodump/
+
+    logger -s -i "Compressing Elastic Indicies"
+        /bin/tar -zcf $BACKUP_PATH_TMP/$DATE-$HNAME/elasticsearch.tar.gz --directory=$ES_PATH <%= node[:graylog][:elasticsearch][:data_dir] %>
+
+    logger -s -i "Compressing mongoDB dump"
+        /bin/tar -zcf $BACKUP_PATH_TMP/$DATE-$HNAME/graylog2-mongodump.tar.gz --directory=$BACKUP_PATH_TMP/$DATE-$HNAME/ graylog2-mongodump
+
+    logger -s -i "Deleting uncompressed dump directory $BACKUP_PATH_TMP/$DATE-$HNAME/graylog2-mongodump"
+        sleep 15
+        rm -rf $BACKUP_PATH_TMP/$DATE-$HNAME/graylog2-mongodump/
+
+    logger -s -i "Starting chef-client, Graylog Server & elasticsearch services"
+        /etc/init.d/elasticsearch start
+        sleep 5
+        /etc/init.d/graylog-server start
+        /etc/init.d/chef-client start
+
+    logger -s -i "Copying backups to Backup server"
+        /usr/bin/scp -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -r -i /root/.ssh/.graylog-key $BACKUP_PATH_TMP/$DATE-$HNAME/  <%= node[:graylog][:backup_server_user] %>@<%= node[:graylog][:backup_server] %>:
+    logger -s -i "Copying backups to Backup server: DONE"
+
+    logger -s -i "Deleting tmp files $BACKUP_PATH_TMP/$DATE-$HNAME/"
+        sleep 15
+        rm -rf $BACKUP_PATH_TMP/$DATE-$HNAME/
+}
+
+logger -s -i "====== BACKUP PROCEDURE OF GRAYLOG SERVER BEGIN ======"
+
+if [ -d "$BACKUP_PATH_TMP" ]
+    then
+        logger -s -i "tmp_backup directory exist"
+    else
+        logger -s -i "Creating tmp_backup directory"
+        mkdir -p $BACKUP_PATH_TMP
+fi
+
+if [ -d "$DIR" ];
+then
+        backup
+                if [ "$?" -eq 0 ];
+                then
+                logger -s -i "Backup successful!"
+                else
+                logger -s -i "Backup failed!" ;
+        fi
+
+else
+        logger -s -i "Backup failed. This is not Graylog server"
+        exit 1;
+fi
+
+logger -s -i "====== BACKUP PROCEDURE OF GRAYLOG SERVER END ======"
